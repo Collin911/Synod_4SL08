@@ -1,0 +1,5 @@
+package synod;
+
+interface Message {
+	
+}
