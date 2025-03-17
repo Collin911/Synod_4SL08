@@ -1,4 +1,5 @@
-create this topology from this adjacency matrix (this graph was created using https://graphonline.ru/en/)
+The README document is still under construction
+PLEASE IGNORE!
 
 ![](img.png)
 ```
