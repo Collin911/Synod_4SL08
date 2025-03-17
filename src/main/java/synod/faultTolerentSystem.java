@@ -43,6 +43,7 @@ public class faultTolerentSystem {
 
         for (int i = 0; i < f; i++) {
             references.get(i).tell(new CrashMsg(), ActorRef.noSender());
+            system.log().info("Crash message sent to p" + i);
         }
         
         // Launch the scheme

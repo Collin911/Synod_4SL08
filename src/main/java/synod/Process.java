@@ -24,10 +24,11 @@ public class Process extends UntypedAbstractActor{
 	private boolean decided; // This flag indicates whether a decision is made
 	private double failProb;
 	
-	private int pBallot; // process ballot
-	private int rBallot; // read    ballot
-	private int iBallot; // impose  ballot
-	private int aBallot; // aborted ballot
+	private int pBallot; // process  ballot
+	private int rBallot; // read     ballot
+	private int iBallot; // impose   ballot
+	private int aBallot; // aborted  ballot
+	private int gBallot; // gathered ballot
 	private int proposal;
 	private int estimate;
 	private int ackRcvd;
@@ -44,12 +45,13 @@ public class Process extends UntypedAbstractActor{
 		this.crash = false;
 		this.hold = false;
 		this.decided = false;
-		this.failProb = 0.5; 
+		this.failProb = 1; 
 		
 		this.pBallot = pid - numProc;
 		this.rBallot = 0;
 		this.iBallot = pid - numProc;
 		this.aBallot = 0;
+		this.gBallot = 0;
 		this.proposal = -1; // Use -1 as bottom value
 		this.estimate = -1;
 	}
@@ -81,11 +83,11 @@ public class Process extends UntypedAbstractActor{
 	@SuppressWarnings("unchecked")
 	@Override
 	public void onReceive(Object message) throws Throwable {
-		Thread.sleep(300);
+		// Thread.sleep(300); // This is for debug usage
 		if(prone_flag && !crash) {
 			if(Math.random() < this.failProb) {
 				this.crash = true; 
-				log.debug("p" + self().path().name() + " has crashed.");
+				log.info("p" + self().path().name() + " has crashed.");
 			}
 		}
 		if(!crash && ! decided) {  
@@ -151,7 +153,7 @@ public class Process extends UntypedAbstractActor{
 			AbortMsg abortMsg = new AbortMsg(ballot);
 			readSender.tell(abortMsg, this.getSelf());
 			log.info("p" + self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from p"+ readSender.path().name() 
-					+ " with ballot " + ballot + ". [ABORT]");
+					+ " with ballot " + ballot + ". Sending [ABORT]");
 			return;
 		}
 		else {
@@ -159,7 +161,7 @@ public class Process extends UntypedAbstractActor{
 			GatherMsg gatherMsg = new GatherMsg(ballot, iBallot, estimate);
 			readSender.tell(gatherMsg, this.getSelf());
 			log.info("p" + self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from p"+ readSender.path().name() 
-					+ " with ballot " + ballot + ". [GATHER]");
+					+ " with ballot " + ballot + ". Sending[GATHER]");
 			return;
 		}
 	}
@@ -182,6 +184,9 @@ public class Process extends UntypedAbstractActor{
 	}
 	
 	private void gather(GatherMsg gatherMsg, ActorRef gatherSender) {
+		// The same thing as abort may happen
+		// Suppose you have received just n/2 GATHERs and begins to impose
+		// Later new GATHERs arrive and you 
 		int mBallot = gatherMsg.getBallotNum();
 		int est = gatherMsg.getEstimate();
 		int imp = gatherMsg.getImposeBallotNum();
@@ -190,7 +195,8 @@ public class Process extends UntypedAbstractActor{
 				+ " states now.");
 		
 		int highest = 0;
-		if(states.size() * 2 >= this.numProc) { // if more than half
+		if(states.size() * 2 >= this.numProc && this.gBallot < mBallot) { // majority && not a ballot that already tried to impose
+			this.gBallot = mBallot;
 			for (Map.Entry<ActorRef, int[]> stateEntry : states.entrySet()) {
 	            int estballot = stateEntry.getValue()[1];  // Get the estballot
 	            if (estballot > highest) {
