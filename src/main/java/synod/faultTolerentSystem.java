@@ -16,11 +16,11 @@ import akka.actor.ActorSystem;
 
 public class faultTolerentSystem {
 	
-	public static int N_proc = 7; // Number of processes
-	public static int f = 3; // Number of possible failure
-	public static double failProb = 0.4; // Probability of failure in prone mode
-	public static boolean debugMode = true;
-	public static int tLe = 3000; // timeout in millisecond
+	public static int N_proc = 100; // Number of processes
+	public static int f = 49; // Number of possible failure
+	public static double failProb = 0.1; // Probability of failure in prone mode
+	public static boolean debugMode = false;
+	public static int tLe = 1000; // leader timeout in millisecond
 	
 
 	public static void main(String[] args) {
@@ -35,14 +35,16 @@ public class faultTolerentSystem {
         // Create processes and designate their IDs
         for (int i = 0; i < N_proc; i++) {
             // Instantiate processes
-            final ActorRef a = system.actorOf(Process.createActor(i + 1, N_proc, 0.7, debugMode), "p" + (i+1));
+            final ActorRef a = system.actorOf(Process.createActor(i + 1, N_proc,failProb, debugMode), "p" + (i+1));
             references.add(a);
             normals.add(a);
         }
         
         // Let processes know each other
+        long startTime = System.currentTimeMillis();
         for (ActorRef actor : references) {
         	actor.tell(references, ActorRef.noSender());
+        	actor.tell(startTime, ActorRef.noSender());
         }
         
         // Take at most f processes to fail
@@ -56,6 +58,7 @@ public class faultTolerentSystem {
         
         // Launch the scheme
         for (ActorRef actor : references) {
+        	
             actor.tell(new LaunchMsg(), ActorRef.noSender());
         }
         system.log().info("SysInfo: Fully launched.");
@@ -64,9 +67,7 @@ public class faultTolerentSystem {
         Collections.shuffle(normals);
         // Take the first one in randomized normal lists as leader
         // Send hold message to everyone else
-        if(debugMode) {
-        	system.log().info("SysInfo: " + normals.get(0).path().name() + " is the leader.");
-        }
+        system.log().info("SysInfo: " + normals.get(0).path().name() + " is the leader.");
         for (int i=1; i < normals.size(); i++) {
         	ActorRef actor = normals.get(i);
         	HoldMsg holdMsg = new HoldMsg();
@@ -85,7 +86,7 @@ public class faultTolerentSystem {
 	}
 
 	public static void waitBeforeTerminate() throws InterruptedException {
-		Thread.sleep(50000);
+		Thread.sleep(600000);
 	}
 	
 }
