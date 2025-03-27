@@ -33,6 +33,10 @@ public class Process extends UntypedAbstractActor{
 	private int estimate;
 	private int ackRcvd;
 	
+	private DecideMsg decision;
+	
+	private long startTime;
+	
 	private boolean debug_mode;
 	// Enabling debug mode will output every message received
 	// by each process and their corresponding status
@@ -60,6 +64,7 @@ public class Process extends UntypedAbstractActor{
 		this.proposal = -1; // Use -1 as bottom value
 		this.estimate = -1;
 		this.debug_mode = false; // false by default
+		this.startTime = 0;
 	}
 	
 	public Process(int ID, int N_proc, double failProb, boolean debug) {
@@ -102,7 +107,7 @@ public class Process extends UntypedAbstractActor{
 	@Override
 	public void onReceive(Object message) throws Throwable {
 		if(this.debug_mode) {
-			Thread.sleep(300); // To display the messages more slowly and clearly
+			//Thread.sleep(300); // To display the messages more slowly and clearly
 		}
 		if(prone_flag && !crash) {
 			if(Math.random() < this.failProb) {
@@ -110,7 +115,7 @@ public class Process extends UntypedAbstractActor{
 				log.info(self().path().name() + " has crashed.");
 			}
 		}
-		if(!crash && ! decided) {  
+		if(!crash) {  
 			// Update actors information
 			if(message instanceof ArrayList){
 				this.updateKnownActors((ArrayList<ActorRef>) message);
@@ -122,12 +127,16 @@ public class Process extends UntypedAbstractActor{
 			else if (message instanceof HoldMsg) {
 				this.hold = true;
 				if(this.debug_mode) {
-					log.info(self().path().name() + " is on hold.");
+					log.info(self().path().name() + " received  HOLD .");
 				}
 			}
 			// Launch the OF-Consensus
 			else if (message instanceof LaunchMsg) {
 				this.propose();
+			}
+			// Take the start time
+			else if (message.getClass() == Long.class) {
+				this.startTime = (long) message;
 			}
 			// Receive READ
 			else if (message instanceof ReadMsg) {
@@ -182,8 +191,10 @@ public class Process extends UntypedAbstractActor{
 			AbortMsg abortMsg = new AbortMsg(ballot);
 			readSender.tell(abortMsg, this.getSelf());
 			if(this.debug_mode) {
-				log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from "+ readSender.path().name() 
-						+ " with ballot " + ballot + ". Sending [ABORT]");
+				 //log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from "+ readSender.path().name() 
+						// + " with ballot " + ballot + ". Sending [ABORT]");
+				log.info(self().path().name() + " received READ from "+ readSender.path().name() 
+						+ " #ballot=" + ballot + ".  Sending [ABORT]" + " (" + this.rBallot + ", " + this.iBallot + ")");
 			}
 			return;
 		}
@@ -192,8 +203,10 @@ public class Process extends UntypedAbstractActor{
 			GatherMsg gatherMsg = new GatherMsg(ballot, iBallot, estimate);
 			readSender.tell(gatherMsg, this.getSelf());
 			if(this.debug_mode) {
-				log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from "+ readSender.path().name() 
-						+ " with ballot " + ballot + ". Sending [GATHER]");
+				// log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") read proposal from "+ readSender.path().name() 
+						// + " with ballot " + ballot + ". Sending [GATHER]");
+				log.info(self().path().name() + " received  READ  from "+ readSender.path().name() 
+						+ " #ballot=" + ballot + ". Sending [GATHER]" + " (" + this.rBallot + ", " + this.iBallot + ")");
 			}
 			return;
 		}
@@ -206,12 +219,12 @@ public class Process extends UntypedAbstractActor{
 		if(abortTargetBallot != this.aBallot && !this.decided) {
 			this.aBallot = abortTargetBallot;
 			if(this.debug_mode) {
-				log.info(self().path().name() + " has aborted due to " + abortSender.path().name());
+				log.info(self().path().name() + " received ABORT  from " + abortSender.path().name());
 			}
 			
-			// Re-propose immediately could cause contention to others' proposal
+			// Re-propose immediately could cause contention to others' proposal (?)
 			LaunchMsg rePropose = new LaunchMsg();
-			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(50), 
+			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(1), 
 					getSelf(), rePropose, getContext().system().dispatcher(), ActorRef.noSender());
 		}
 		return;
@@ -222,17 +235,20 @@ public class Process extends UntypedAbstractActor{
 		// Suppose you have received just n/2 GATHERs and begins to impose
 		// Later new GATHERs arrive and you 
 		int mBallot = gatherMsg.getBallotNum();
-		int est = gatherMsg.getEstimate();
 		int imp = gatherMsg.getImposeBallotNum();
+		int est = gatherMsg.getEstimate();
+		
 		this.states.put(gatherSender, new int[]{est, imp});
+		
 		if(this.debug_mode) {
-			log.info(self().path().name() + " has "+ states.size() 
+			log.info(self().path().name() + " received GATHER from " + gatherSender.path().name() + ". " + states.size() 
 				+ " states now.");
 		}
 		
 		
 		int highest = 0;
-		if(states.size() * 2 >= this.numProc && this.gBallot < mBallot) { // majority && not a ballot that already tried to impose
+		if(states.size() * 2 > this.numProc && this.gBallot != mBallot) { // majority && not a ballot that already tried to impose
+			// NOTE: exact half is NOT a majority!!
 			this.gBallot = mBallot;
 			for (Map.Entry<ActorRef, int[]> stateEntry : states.entrySet()) {
 	            int estballot = stateEntry.getValue()[1];  // Get the estballot
@@ -243,11 +259,11 @@ public class Process extends UntypedAbstractActor{
 	        }
 			this.states.clear();
 			if(this.debug_mode) {
-				log.info(self().path().name() + " is trying to impose the proposal "+ proposal 
-					+ " with ballot number " + mBallot + ".");
+				log.info(self().path().name() + " imposed  "+ proposal 
+					+ " #ballot=" + pBallot + ".");
 			}
 			
-			ImposeMsg imposeMsg = new ImposeMsg(mBallot, this.proposal);
+			ImposeMsg imposeMsg = new ImposeMsg(pBallot,proposal); // use my own ballot to impose
 			for (ActorRef process : this.knownActors) {
 				process.tell(imposeMsg, this.getSelf());
 			}
@@ -257,14 +273,15 @@ public class Process extends UntypedAbstractActor{
 	private void impose(ImposeMsg imposeMsg, ActorRef imposeSender) {
 		int ballot = imposeMsg.getBallotNum();
 		int impValue = imposeMsg.getProposal(); 
-		if (this.rBallot > ballot || this.iBallot > ballot) {
+		if (this.rBallot > ballot || this.iBallot > ballot || this.decided==true) {  // fail-safe #1
 			AbortMsg abortMsg = new AbortMsg(ballot);
 			imposeSender.tell(abortMsg, this.getSelf());
 			if(this.debug_mode) {
-				log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") has read imposeMsg from "+ imposeSender.path().name() 
-					+ " with ballot " + ballot + ". [ABORT]");
+				// log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") has read imposeMsg from "+ imposeSender.path().name() 
+					// + " with ballot " + ballot + ". [ABORT]");
+				log.info(self().path().name() + " received IMPOSE from "+ imposeSender.path().name() 
+						+ " #ballot=" + ballot + ". Sending [ABORT]" + " (" + this.rBallot + ", " + this.iBallot + ")");
 			}
-			
 			return;
 		}
 		else {
@@ -273,7 +290,7 @@ public class Process extends UntypedAbstractActor{
 			AckMsg ackMsg = new AckMsg(ballot);
 			imposeSender.tell(ackMsg, this.getSelf());
 			if(this.debug_mode) {
-				log.info(self().path().name() + " has ACKed imposeMsg from "+ imposeSender.path().name()+ ".");
+				log.info(self().path().name() + " ack'ed   IMPOSE from "+ imposeSender.path().name()+ " #ballot=" + ballot + ".");
 			}
 			
 		}
@@ -281,29 +298,47 @@ public class Process extends UntypedAbstractActor{
 	
 	private void acknowledge() {
 		this.ackRcvd += 1;
-		if (ackRcvd * 2 >= this.numProc && !this.decided) {
+		if (ackRcvd * 2 > this.numProc && !this.decided) { // fail-safe #2
 			this.decided = true;
-			DecideMsg decide = new DecideMsg(this.proposal);
-			log.info(self().path().name() + " has DECIDED the value "+ this.proposal 
-					+ " with ballot number " + this.pBallot + ".");
+			DecideMsg decide = new DecideMsg(this.pBallot, this.proposal); 
+			// decision message takes the #ballot of the decider as an unique identifier
+			long elapsedTime =  System.currentTimeMillis() - startTime;
 			for (ActorRef process : this.knownActors) {
-				if (process != this.getSelf()) { // You don't need to tell yourself the decision
-					process.tell(decide, this.getSelf());
-				}
+				process.tell(decide, this.getSelf());
+				// getContext().system().scheduler().scheduleOnce(Duration.ofMillis(1000), 
+						// process, decide, getContext().system().dispatcher(), this.getSelf());
 			}
+			if(this.debug_mode) {
+				log.info(self().path().name() + " received  A C K from a quorum. #ballot=" + this.pBallot);
+			}
+			log.info(self().path().name() + " DECIDED "
+					+ " value=" + proposal + " #ballot=" + pBallot + ". Time: " + elapsedTime + ".");
+			
 		}
 	}
 	
 	private void decide(DecideMsg decide, ActorRef decSender) {
 		if(!this.decided) {
 			this.decided = true;
+			this.decision = decide;
 			int value = decide.getProposal();
-			log.info(self().path().name() + " has received decision from " + decSender.path().name() + " with value=" + value + ".");
+			long elapsedTime =  System.currentTimeMillis() - startTime;
 			for (ActorRef process : this.knownActors) {
-				if (process != this.getSelf()) { 
+				// simply forward the decision message
+				if (process != this.getSelf()) {// You don't need to forward to yourself
 					process.tell(decide, this.getSelf());
+					//getContext().system().scheduler().scheduleOnce(Duration.ofMillis(100), 
+							//process, decide, getContext().system().dispatcher(), this.getSelf());
 				}
 			}
+			log.info(self().path().name() + " received DECIDE from " + decSender.path().name() 
+					+ " value=" + value + " #ballot=" + decide.getBallotNum() + ". Time: " + elapsedTime + ".");
+		}
+		else if (decision != null && decision.getBallotNum() != decide.getBallotNum()) { // if different decision received
+			// Theoretically, this line will NEVER be executed
+			// however, I'm keeping this line for debug usage
+			log.error(self().path().name() + ": Multiple Decision Received!");
+			// In fact, this may happen if you don't tell others to abort even when you have already received a decision (?)
 		}
 	}
 
