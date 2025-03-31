@@ -13,18 +13,18 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 
 
-
 public class faultTolerentSystem {
 	
-	public static int N_proc = 100; // Number of processes
-	public static int f = 49; // Number of possible failure
-	public static double failProb = 0.1; // Probability of failure in prone mode
+	public static int N_proc = 10; // Number of processes
+	public static int f = 4; // Number of possible failure
+	public static double failProb = 1; // Probability of failure in prone mode
 	public static boolean debugMode = false;
-	public static int tLe = 1000; // leader timeout in millisecond
+	public static int tLe = 2000; // leader timeout in millisecond
 	
 
 	public static void main(String[] args) {
 
+		
 		final ActorSystem system = ActorSystem.create("system");
 		
         system.log().info("System started.");
@@ -67,7 +67,11 @@ public class faultTolerentSystem {
         Collections.shuffle(normals);
         // Take the first one in randomized normal lists as leader
         // Send hold message to everyone else
-        system.log().info("SysInfo: " + normals.get(0).path().name() + " is the leader.");
+        // system.log().info("SysInfo: " + normals.get(0).path().name() + " is the leader.");
+        system.scheduler().scheduleOnce(Duration.ofMillis(tLe), // Delay
+                () -> system.log().info("SysInfo: " + normals.get(0).path().name() + " is the leader."),
+                system.dispatcher()
+            );
         for (int i=1; i < normals.size(); i++) {
         	ActorRef actor = normals.get(i);
         	HoldMsg holdMsg = new HoldMsg();
