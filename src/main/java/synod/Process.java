@@ -55,6 +55,7 @@ public class Process extends UntypedAbstractActor{
 		this.hold = false;
 		this.decided = false;
 		this.failProb = failProb; 
+		this.ackRcvd = 0;
 		
 		this.pBallot = pid - numProc;
 		this.rBallot = 0;
@@ -65,6 +66,9 @@ public class Process extends UntypedAbstractActor{
 		this.estimate = -1;
 		this.debug_mode = false; // false by default
 		this.startTime = 0;
+		
+		Random random = new Random();
+		this.proposal = random.nextInt(2); // Generates 0 or 1
 	}
 	
 	public Process(int ID, int N_proc, double failProb, boolean debug) {
@@ -168,10 +172,7 @@ public class Process extends UntypedAbstractActor{
 	
 	private void propose() {
 		if(this.hold) {return;} // do NOT propose in the hold mode
-		Random random = new Random();
-		this.proposal = random.nextInt(2); // Generates 0 or 1
-		
-		this.ackRcvd = 0;
+
 		this.pBallot += numProc;
 		this.states.clear();
 		
@@ -210,24 +211,6 @@ public class Process extends UntypedAbstractActor{
 			}
 			return;
 		}
-	}
-	
-	private void abort(AbortMsg abortMsg, ActorRef abortSender) {
-		// it may receive several abort message targeted to a single proposal
-		// it's crucial to identify or you risk aborting the more recent ones
-		int abortTargetBallot = abortMsg.getBallotNum();
-		if(abortTargetBallot != this.aBallot && !this.decided) {
-			this.aBallot = abortTargetBallot;
-			if(this.debug_mode) {
-				log.info(self().path().name() + " received ABORT  from " + abortSender.path().name());
-			}
-			
-			// Re-propose immediately could cause contention to others' proposal (?)
-			LaunchMsg rePropose = new LaunchMsg();
-			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(1), 
-					getSelf(), rePropose, getContext().system().dispatcher(), ActorRef.noSender());
-		}
-		return;
 	}
 	
 	private void gather(GatherMsg gatherMsg, ActorRef gatherSender) {
@@ -273,14 +256,15 @@ public class Process extends UntypedAbstractActor{
 	private void impose(ImposeMsg imposeMsg, ActorRef imposeSender) {
 		int ballot = imposeMsg.getBallotNum();
 		int impValue = imposeMsg.getProposal(); 
-		if (this.rBallot > ballot || this.iBallot > ballot || this.decided==true) {  // fail-safe #1
+		if (this.rBallot > ballot || this.iBallot > ballot) {  
 			AbortMsg abortMsg = new AbortMsg(ballot);
 			imposeSender.tell(abortMsg, this.getSelf());
 			if(this.debug_mode) {
 				// log.info(self().path().name() + "(" + this.rBallot + ", " + this.iBallot + ") has read imposeMsg from "+ imposeSender.path().name() 
 					// + " with ballot " + ballot + ". [ABORT]");
 				log.info(self().path().name() + " received IMPOSE from "+ imposeSender.path().name() 
-						+ " #ballot=" + ballot + ". Sending [ABORT]" + " (" + this.rBallot + ", " + this.iBallot + ")");
+						+ " #ballot=" + ballot + ". Sending [ABORT]" + " (" + this.rBallot + ", " + this.iBallot + ")"
+						+ (this.rBallot > ballot) + (this.iBallot > ballot) + (this.decided));
 			}
 			return;
 		}
@@ -298,10 +282,11 @@ public class Process extends UntypedAbstractActor{
 	
 	private void acknowledge() {
 		this.ackRcvd += 1;
-		if (ackRcvd * 2 > this.numProc && !this.decided) { // fail-safe #2
+		if (ackRcvd * 2 > this.numProc && !this.decided) { 
 			this.decided = true;
+			this.ackRcvd = 0;
 			DecideMsg decide = new DecideMsg(this.pBallot, this.proposal); 
-			// decision message takes the #ballot of the decider as an unique identifier
+			
 			long elapsedTime =  System.currentTimeMillis() - startTime;
 			for (ActorRef process : this.knownActors) {
 				process.tell(decide, this.getSelf());
@@ -333,13 +318,33 @@ public class Process extends UntypedAbstractActor{
 			}
 			log.info(self().path().name() + " received DECIDE from " + decSender.path().name() 
 					+ " value=" + value + " #ballot=" + decide.getBallotNum() + ". Time: " + elapsedTime + ".");
+			debug_mode = false;
 		}
-		else if (decision != null && decision.getBallotNum() != decide.getBallotNum()) { // if different decision received
+		else if (decision != null && decision.getProposal() != decide.getProposal()) { // if different decision received
 			// Theoretically, this line will NEVER be executed
 			// however, I'm keeping this line for debug usage
 			log.error(self().path().name() + ": Multiple Decision Received!");
 			// In fact, this may happen if you don't tell others to abort even when you have already received a decision (?)
 		}
+	}
+	
+	
+	private void abort(AbortMsg abortMsg, ActorRef abortSender) {
+		// it may receive several abort message targeted to a single proposal
+		// it's crucial to identify or you risk aborting the more recent ones
+		int abortTargetBallot = abortMsg.getBallotNum();
+		if(abortTargetBallot > this.aBallot && !this.decided) {
+			this.aBallot = abortTargetBallot;
+			if(this.debug_mode) {
+				log.info(self().path().name() + " received ABORT  from " + abortSender.path().name());
+			}
+			
+			// Re-propose immediately could cause contention to others' proposal (?)
+			LaunchMsg rePropose = new LaunchMsg();
+			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(0), 
+					getSelf(), rePropose, getContext().system().dispatcher(), ActorRef.noSender());
+		}
+		return;
 	}
 
 }
