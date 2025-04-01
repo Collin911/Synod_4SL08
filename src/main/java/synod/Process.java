@@ -339,9 +339,8 @@ public class Process extends UntypedAbstractActor{
 				log.info(self().path().name() + " received ABORT  from " + abortSender.path().name());
 			}
 			
-			// Re-propose immediately could cause contention to others' proposal (?)
 			LaunchMsg rePropose = new LaunchMsg();
-			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(0), 
+			getContext().system().scheduler().scheduleOnce(Duration.ofMillis(0),  // configurable re-propose delay
 					getSelf(), rePropose, getContext().system().dispatcher(), ActorRef.noSender());
 		}
 		return;
